@@ -1,4 +1,5 @@
 const express = require("express");
+const { Readable } = require("stream");
 const { getRouter } = require("stremio-addon-sdk");
 const addonInterface = require("./addon");
 
@@ -9,6 +10,11 @@ const HOST_URL = (
   process.env.RENDER_EXTERNAL_URL ||
   `http://localhost:${PORT}`
 ).replace(/\/+$/, "");
+
+// Optional public CORS relay used only when PimpBunny cannot be reached from
+// this host. Keep this configurable: public relays are not reliable enough to
+// be the primary path for large, seekable video files.
+const CORS_PROXY_URL = (process.env.CORS_PROXY_URL || "https://corsproxy.io/?url=").trim();
 
 // Universal CORS headers
 app.use((req, res, next) => {
@@ -243,7 +249,7 @@ app.get("/debug/fetch", async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Proxy for Pornhub/Pimpbunny HLS playlists & segments
+// Proxy for PimpBunny MP4/HLS streams.
 // Allowed hosts: pimpbunny.com and phncdn.com (video CDN).
 // ---------------------------------------------------------------------------
 app.get("/proxy/stream", async (req, res) => {
@@ -266,16 +272,41 @@ app.get("/proxy/stream", async (req, res) => {
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 25000);
-    const response = await fetch(targetUrl, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        Referer: "https://pimpbunny.com/",
-      },
-    });
-    clearTimeout(timeoutId);
+    const requestHeaders = {
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      Referer: "https://pimpbunny.com/",
+    };
+    // Media players seek with byte ranges. Passing this through is essential
+    // for MP4 playback and prevents buffering the whole file in this server.
+    if (req.headers.range) requestHeaders.Range = req.headers.range;
+
+    const fetchUpstream = async (url, headers) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      try {
+        return await fetch(url, {
+          method: req.method === "HEAD" ? "HEAD" : "GET",
+          signal: controller.signal,
+          headers,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    let response;
+    try {
+      response = await fetchUpstream(targetUrl, requestHeaders);
+      if (!response.ok) throw new Error(`upstream ${response.status}`);
+    } catch (directError) {
+      if (!CORS_PROXY_URL) throw directError;
+      // corsproxy.io expects the original URL as the encoded query suffix.
+      // Do not send a forged Referer to a third party proxy.
+      response = await fetchUpstream(
+        `${CORS_PROXY_URL}${encodeURIComponent(targetUrl)}`,
+        req.headers.range ? { Range: req.headers.range } : {}
+      );
+    }
 
     const contentType = response.headers.get("content-type") || "";
     const isPlaylist = /\.m3u8/i.test(targetUrl) || /mpegurl/i.test(contentType);
@@ -298,7 +329,6 @@ app.get("/proxy/stream", async (req, res) => {
       return res.send(text);
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
     res.status(response.status);
     res.setHeader("Content-Type", contentType || "video/mp2t");
     res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
@@ -309,7 +339,8 @@ app.get("/proxy/stream", async (req, res) => {
       res.setHeader("Content-Range", response.headers.get("content-range"));
     }
     res.setHeader("Cache-Control", "public, max-age=3600");
-    return res.send(buffer);
+    if (req.method === "HEAD" || !response.body) return res.end();
+    return Readable.fromWeb(response.body).pipe(res);
   } catch (err) {
     return res.status(404).send("Segment or playlist not found.");
   }

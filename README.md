@@ -11,8 +11,11 @@ Built on the [Stremio Addon SDK](https://github.com/Stremio/stremio-addon-sdk) a
 - **Pagination**: scroll down to load more videos (page 2, 3, etc.) — works on category and search catalogs. Uses Stremio's `extra.skip` offset to fetch the correct page of results.
 - **Meta**: title, poster, background, description
 - **Streams**: one stream per video quality (360p, 720p, 1080p, 1440p, etc.) with direct MP4 URLs
-- **Direct stream URLs** — Stremio plays them natively
-- No proxy, no CORS relay, no external dependencies beyond the pimpbunny.com website
+- **Seekable proxied stream URLs** — the addon forwards PimpBunny's required
+  referrer and player byte-range requests, avoiding browser CORS restrictions.
+- If the addon host cannot reach PimpBunny, it can retry through
+  `https://corsproxy.io/`. Set `CORS_PROXY_URL` to another compatible relay or
+  to an empty value to disable that fallback.
 
 ## Install & run locally
 
@@ -61,7 +64,8 @@ README.md
 ## Notes
 
 - pimpbunny.com is scraped directly. If the site changes its HTML structure, the selectors in `addon.js` may need updating.
-- Streams are direct MP4 URLs from pimpbunny.com. Stremio handles playback natively.
+- Streams are served through the addon's `/proxy/stream` route. This preserves
+  the upstream `Referer` header and forwards `Range` requests so seeking works.
 - This addon only indexes pimpbunny.com videos. It does not host any content.
 - Category and search catalogs support infinite scroll (pagination) — Stremio will load more videos as you scroll down.
 
