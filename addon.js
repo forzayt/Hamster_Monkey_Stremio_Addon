@@ -224,7 +224,7 @@ const manifest = {
   name: "PimpBunny",
   description:
     "Browse and stream videos from pimpbunny.com. Categories, qualities and streams are auto-fetched from the site.",
-  logo: "https://pimpbunny.com/static/v2/images/logo.png",
+  logo: "https://pimpbunny.com/static/v2/images/popup/age-verification/age-verification.png",
   resources: ["catalog", "meta", "stream"],
   types: ["movie"],
   idPrefixes: ["pb:"],
