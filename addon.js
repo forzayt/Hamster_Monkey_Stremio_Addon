@@ -206,7 +206,9 @@ async function parseVideoPage(slug) {
 
   const streams = Object.entries(sources).map(([quality, url]) => ({
     title: quality,
-    url,
+    // Proxy through this addon so Stremio never hits pimpbunny.com directly
+    // (avoids CORS / strict-origin-when-cross-origin errors).
+    url: `${HOST_URL}/proxy/stream?url=${encodeURIComponent(url)}`,
   }));
 
   console.log(
@@ -233,7 +235,7 @@ const manifest = {
       type: "movie",
       id: "pimpbunny_popular",
       name: "Popular",
-      extra: [{ name: "search", isRequired: false }],
+      extra: [{ name: "search", isRequired: false }, { name: "skip" }],
     },
     ...CATEGORIES.map(([slug, name]) => ({
       type: "movie",
