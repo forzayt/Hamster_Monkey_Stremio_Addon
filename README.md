@@ -8,6 +8,7 @@ Built on the [Stremio Addon SDK](https://github.com/Stremio/stremio-addon-sdk) a
 
 - **Catalogs**: "Popular" + one catalog per pimpbunny category (Anal, Blowjob, Lesbian, MILF, Teen, etc.)
 - **Search**: every catalog supports a search query
+- **Pagination**: scroll down to load more videos (page 2, 3, etc.) — works on category and search catalogs
 - **Meta**: title, poster, background, description
 - **Streams**: one stream per video quality (360p, 720p, 1080p, 1440p, etc.) with direct MP4 URLs
 - **Direct stream URLs** — Stremio plays them natively
@@ -53,7 +54,7 @@ README.md
 
 ## How it works
 
-- **Catalog handler** fetches the pimpbunny homepage (Popular) or a category page (`/categories/<slug>/`), parses `.ui-card-video` nodes and returns video metas.
+- **Catalog handler** fetches the pimpbunny homepage (Popular) or a category page (`/categories/<slug>/?page=N`), parses `.ui-card-video` nodes and returns video metas. Supports Stremio's `extra.skip` for pagination.
 - **Meta handler** fetches the video page (`/videos/<slug>/`), parses Open Graph tags for title/poster/description.
 - **Stream handler** fetches the video page, extracts `get_file` MP4 URLs for each quality (360p, 720p, 1080p, 1440p, etc.), and returns one stream per quality.
 
@@ -62,6 +63,7 @@ README.md
 - pimpbunny.com is scraped directly. If the site changes its HTML structure, the selectors in `addon.js` may need updating.
 - Streams are direct MP4 URLs from pimpbunny.com. Stremio handles playback natively.
 - This addon only indexes pimpbunny.com videos. It does not host any content.
+- Category and search catalogs support infinite scroll (pagination) — Stremio will load more videos as you scroll down.
 
 ## License
 
