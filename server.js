@@ -37,6 +37,7 @@ app.get("/", (req, res) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PimpBunny Stremio Addon</title>
+  <link rel="icon" href="https://pimpbunny.com/static/v2/images/popup/age-verification/age-verification.png" type="image/png">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
