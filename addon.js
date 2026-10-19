@@ -253,28 +253,31 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   if (type !== "movie") return { metas: [] };
   const search = extra && extra.search ? String(extra.search) : null;
   const skip = extra && extra.skip ? parseInt(extra.skip, 10) : 0;
-  const PAGE_SIZE = 32;
-  const page = Math.floor(skip / PAGE_SIZE) + 1;
+  const VIDEOS_PER_PAGE = 32;
 
   try {
     if (id === "pimpbunny_popular") {
-      // Homepage does not paginate via ?page= (returns same content),
-      // so only serve the first page; Stremio will stop asking when we return [].
-      if (skip > 0) return { metas: [] };
+      // Homepage does not paginate via ?page= (returns same content).
+      // Return a slice starting from the skip offset so Stremio can paginate.
       const url = search ? searchUrl(search) : BASE + "/";
       const html = await fetchHtml(url);
-      const metas = await parseVideoList(html);
-      console.log(`[pimpbunny] catalog ${id} -> ${metas.length} metas`);
-      return { metas };
+      const allMetas = await parseVideoList(html);
+      console.log(`[pimpbunny] catalog ${id} skip=${skip} -> ${allMetas.slice(skip).length} metas`);
+      return { metas: allMetas.slice(skip) };
     }
 
     const m = id.match(/^pimpbunny_cat_(.+)$/);
     if (m) {
       const slug = m[1];
+      // Determine which pimpbunny page contains the skip offset.
+      const page = Math.floor(skip / VIDEOS_PER_PAGE) + 1;
+      const offsetInPage = skip % VIDEOS_PER_PAGE;
       const url = search ? searchUrl(search, page) : catUrl(slug, page);
       const html = await fetchHtml(url);
-      const metas = await parseVideoList(html);
-      console.log(`[pimpbunny] catalog ${id} page ${page} -> ${metas.length} metas`);
+      const allMetas = await parseVideoList(html);
+      // Return a slice starting from the offset within this page.
+      const metas = allMetas.slice(offsetInPage);
+      console.log(`[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`);
       return { metas };
     }
   } catch (e) {
