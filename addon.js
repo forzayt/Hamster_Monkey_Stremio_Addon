@@ -23,19 +23,34 @@ const HOST_URL = (
   `http://localhost:${process.env.PORT || 7000}`
 ).replace(/\/+$/, "");
 
-// Simple in-memory cache.
+// Server-side caches keep repeated Stremio catalog/meta requests from hitting
+// the source site. Streams are deliberately excluded: their v-acctoken URLs
+// are signed and may expire long before a day has passed.
 const cache = new Map();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const catalogCache = new Map();
+const metaCache = new Map();
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
-async function fetchHtml(u) {
+function readCache(store, key, ttl = CACHE_TTL) {
+  const cached = store.get(key);
+  if (!cached || Date.now() - cached.t >= ttl) return null;
+  return cached.d;
+}
+
+function writeCache(store, key, data) {
+  store.set(key, { d: data, t: Date.now() });
+  return data;
+}
+
+async function fetchHtml(u, ttl = CACHE_TTL) {
   const c = cache.get(u);
-  if (c && Date.now() - c.t < CACHE_TTL) return c.d;
+  if (ttl > 0 && c && Date.now() - c.t < ttl) return c.d;
   const { data } = await axios.get(u, {
     headers,
     timeout: 25000,
     maxRedirects: 5,
   });
-  cache.set(u, { d: data, t: Date.now() });
+  if (ttl > 0) cache.set(u, { d: data, t: Date.now() });
   return data;
 }
 
@@ -161,7 +176,8 @@ const REGEX_STREAM = /https:\/\/[^"'\s<>]*?get_file[^"'\s<>]*?\.mp4[^"'\s<>]*/gi
 const REGEX_QUALITY = /_(\d+p)\.mp4/i;
 
 async function parseVideoPage(slug) {
-  const html = await fetchHtml(videoUrl(slug));
+  // Do not cache pages used to extract stream URLs. They contain signed tokens.
+  const html = await fetchHtml(videoUrl(slug), 0);
   const $ = $load(html);
 
   // --- Title ---
@@ -260,6 +276,9 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   // upstream site exposes 32 entries per page, so translate that offset below.
   const UPSTREAM_PAGE_SIZE = 32;
   const CATALOG_PAGE_SIZE = 100;
+  const cacheKey = JSON.stringify({ id, skip, search: search || "" });
+  const cached = readCache(catalogCache, cacheKey);
+  if (cached) return cached;
 
   try {
     if (id === "pimpbunny_popular") {
@@ -269,7 +288,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       const html = await fetchHtml(url);
       const metas = await parseVideoList(html);
       console.log(`[pimpbunny] catalog ${id} -> ${metas.length} metas`);
-      return { metas };
+      return writeCache(catalogCache, cacheKey, { metas });
     }
 
     const m = id.match(/^pimpbunny_cat_(.+)$/);
@@ -301,7 +320,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
       console.log(
         `[pimpbunny] catalog ${id} pages=${pages.join(",")} skip=${skip} -> ${metas.length} metas`
       );
-      return { metas };
+      return writeCache(catalogCache, cacheKey, { metas });
     }
   } catch (e) {
     console.error(`[pimpbunny] Catalog ${id} error:`, e.message);
@@ -317,11 +336,13 @@ builder.defineMetaHandler(async ({ type, id }) => {
   const m = id.match(/^pb:(.+)$/);
   if (!m) return { meta: null };
   const slug = m[1];
+  const cached = readCache(metaCache, id);
+  if (cached) return cached;
 
   try {
     const { title, poster, desc } = await parseVideoPage(slug);
     console.log(`[pimpbunny] meta ${id} -> "${title}"`);
-    return {
+    return writeCache(metaCache, id, {
       meta: {
         id,
         type: "movie",
@@ -330,7 +351,7 @@ builder.defineMetaHandler(async ({ type, id }) => {
         background: poster,
         description: desc || "Video from pimpbunny.com",
       }
-    };
+    });
   } catch (e) {
     console.error(`[pimpbunny] Meta ${id} error:`, e.message);
     return { meta: null };
