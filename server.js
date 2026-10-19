@@ -1,5 +1,6 @@
 const express = require("express");
-const { Readable } = require("stream");
+const axios = require("axios");
+const { pipeline } = require("stream");
 const { getRouter } = require("stremio-addon-sdk");
 const addonInterface = require("./addon");
 
@@ -280,24 +281,29 @@ app.get("/proxy/stream", async (req, res) => {
     // for MP4 playback and prevents buffering the whole file in this server.
     if (req.headers.range) requestHeaders.Range = req.headers.range;
 
-    const fetchUpstream = async (url, headers) => {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 25000);
-      try {
-        return await fetch(url, {
-          method: req.method === "HEAD" ? "HEAD" : "GET",
-          signal: controller.signal,
-          headers,
-        });
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
+    // Use Axios's Node stream rather than the built-in fetch implementation.
+    // Some CDN/proxy responses have an incorrect Content-Length; Undici treats
+    // that as a fatal stream error. Axios lets us report the failed playback
+    // request cleanly without taking down the addon process.
+    const fetchUpstream = (url, headers) =>
+      axios({
+        url,
+        method: req.method === "HEAD" ? "head" : "get",
+        headers,
+        responseType: "stream",
+        timeout: 25000,
+        maxRedirects: 5,
+        decompress: false,
+        validateStatus: () => true,
+      });
 
     let response;
     try {
       response = await fetchUpstream(targetUrl, requestHeaders);
-      if (!response.ok) throw new Error(`upstream ${response.status}`);
+      if (response.status < 200 || response.status >= 300) {
+        response.data?.resume();
+        throw new Error(`upstream ${response.status}`);
+      }
     } catch (directError) {
       if (!CORS_PROXY_URL) throw directError;
       // corsproxy.io expects the original URL as the encoded query suffix.
@@ -306,13 +312,18 @@ app.get("/proxy/stream", async (req, res) => {
         `${CORS_PROXY_URL}${encodeURIComponent(targetUrl)}`,
         req.headers.range ? { Range: req.headers.range } : {}
       );
+      if (response.status < 200 || response.status >= 300) {
+        response.data?.resume();
+        throw new Error(`CORS proxy ${response.status}`);
+      }
     }
 
-    const contentType = response.headers.get("content-type") || "";
+    const contentType = response.headers["content-type"] || "";
     const isPlaylist = /\.m3u8/i.test(targetUrl) || /mpegurl/i.test(contentType);
 
     if (isPlaylist) {
-      const body = await response.text();
+      let body = "";
+      for await (const chunk of response.data) body += chunk;
       const base = targetUrl.substring(0, targetUrl.lastIndexOf("/") + 1);
       let text = body
         .replace(/URI="([^"]+)"/g, (_, uri) => {
@@ -331,16 +342,19 @@ app.get("/proxy/stream", async (req, res) => {
 
     res.status(response.status);
     res.setHeader("Content-Type", contentType || "video/mp2t");
-    res.setHeader("Accept-Ranges", response.headers.get("accept-ranges") || "bytes");
-    if (response.headers.get("content-length")) {
-      res.setHeader("Content-Length", response.headers.get("content-length"));
-    }
-    if (response.headers.get("content-range")) {
-      res.setHeader("Content-Range", response.headers.get("content-range"));
+    res.setHeader("Accept-Ranges", response.headers["accept-ranges"] || "bytes");
+    // Do not forward Content-Length: faulty public proxies sometimes advertise
+    // a length that does not match the stream they actually send.
+    if (response.headers["content-range"]) {
+      res.setHeader("Content-Range", response.headers["content-range"]);
     }
     res.setHeader("Cache-Control", "public, max-age=3600");
-    if (req.method === "HEAD" || !response.body) return res.end();
-    return Readable.fromWeb(response.body).pipe(res);
+    if (req.method === "HEAD" || !response.data) return res.end();
+    return pipeline(response.data, res, (streamError) => {
+      if (!streamError || res.destroyed) return;
+      console.warn(`[proxy] stream interrupted: ${streamError.message}`);
+      res.destroy(streamError);
+    });
   } catch (err) {
     return res.status(404).send("Segment or playlist not found.");
   }
