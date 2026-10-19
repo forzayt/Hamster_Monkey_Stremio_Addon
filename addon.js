@@ -239,7 +239,7 @@ const manifest = {
       type: "movie",
       id: `pimpbunny_cat_${slug}`,
       name,
-      extra: [{ name: "search", isRequired: false }],
+      extra: [{ name: "search", isRequired: false }, { name: "skip" }],
     })),
   ],
 };
@@ -252,9 +252,12 @@ const builder = new addonBuilder(manifest);
 builder.defineCatalogHandler(async ({ type, id, extra }) => {
   if (type !== "movie") return { metas: [] };
   const search = extra && extra.search ? String(extra.search) : null;
-  const skip = extra && extra.skip ? parseInt(extra.skip, 10) : 0;
-  const PAGE_SIZE = 32;
-  const page = Math.floor(skip / PAGE_SIZE) + 1;
+  const requestedSkip = extra && extra.skip ? parseInt(extra.skip, 10) : 0;
+  const skip = Number.isFinite(requestedSkip) && requestedSkip > 0 ? requestedSkip : 0;
+  // Stremio paginates catalogs with `skip` offsets (normally 100 items). The
+  // upstream site exposes 32 entries per page, so translate that offset below.
+  const UPSTREAM_PAGE_SIZE = 32;
+  const CATALOG_PAGE_SIZE = 100;
 
   try {
     if (id === "pimpbunny_popular") {
@@ -270,12 +273,32 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     const m = id.match(/^pimpbunny_cat_(.+)$/);
     if (m) {
       const slug = m[1];
-      // Fetch ONE page at a time (viewport scroll). Stremio will call again
-      // with a higher skip when the user scrolls to the bottom.
-      const url = search ? searchUrl(search, page) : catUrl(slug, page);
-      const html = await fetchHtml(url);
-      const metas = await parseVideoList(html);
-      console.log(`[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`);
+      // Return a full Stremio page. Starting at the exact source offset keeps
+      // pages contiguous even though PimpBunny pages contain only 32 entries.
+      const firstUpstreamPage = Math.floor(skip / UPSTREAM_PAGE_SIZE) + 1;
+      const offsetInFirstPage = skip % UPSTREAM_PAGE_SIZE;
+      const upstreamPageCount = Math.ceil(
+        (offsetInFirstPage + CATALOG_PAGE_SIZE) / UPSTREAM_PAGE_SIZE
+      );
+      const pages = Array.from(
+        { length: upstreamPageCount },
+        (_, index) => firstUpstreamPage + index
+      );
+      const results = await Promise.all(
+        pages.map((page) =>
+          fetchHtml(search ? searchUrl(search, page) : catUrl(slug, page)).then(
+            parseVideoList
+          )
+        )
+      );
+      const seen = new Set();
+      const metas = results
+        .flat()
+        .filter((meta) => !seen.has(meta.id) && seen.add(meta.id))
+        .slice(offsetInFirstPage, offsetInFirstPage + CATALOG_PAGE_SIZE);
+      console.log(
+        `[pimpbunny] catalog ${id} pages=${pages.join(",")} skip=${skip} -> ${metas.length} metas`
+      );
       return { metas };
     }
   } catch (e) {
