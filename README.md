@@ -54,7 +54,7 @@ README.md
 
 ## How it works
 
-- **Catalog handler** fetches the pimpbunny homepage (Popular) or a category page (`/categories/<slug>/<page>/`), parses `.ui-card-video` nodes and returns video metas. Fetches 3 pages at once (MalluFlix pattern) so Stremio always has enough results on scroll. Supports Stremio's `extra.skip` for pagination.
+- **Catalog handler** fetches the pimpbunny homepage (Popular) or one category page at a time (`/categories/<slug>/<page>/`), parses `.ui-card-video` nodes and returns video metas. Uses Stremio's `extra.skip` to fetch the next page when you scroll.
 - **Meta handler** fetches the video page (`/videos/<slug>/`), parses Open Graph tags for title/poster/description.
 - **Stream handler** fetches the video page, extracts `get_file` MP4 URLs for each quality (360p, 720p, 1080p, 1440p, etc.), and returns one stream per quality.
 

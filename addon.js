@@ -258,8 +258,7 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
 
   try {
     if (id === "pimpbunny_popular") {
-      // Homepage does not paginate via ?page= (returns same content),
-      // so only serve the first batch; Stremio will stop asking when we return [].
+      // Homepage does not paginate — return only the first batch.
       if (skip > 0) return { metas: [] };
       const url = search ? searchUrl(search) : BASE + "/";
       const html = await fetchHtml(url);
@@ -271,29 +270,12 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
     const m = id.match(/^pimpbunny_cat_(.+)$/);
     if (m) {
       const slug = m[1];
-      // Fetch multiple pages at once (like MalluFlix) so Stremio always
-      // has enough results and new videos appear on each pagination call.
-      const pages = [page, page + 1, page + 2];
-      const results = await Promise.all(
-        pages.map((p) =>
-          fetchHtml(search ? searchUrl(search, p) : catUrl(slug, p)).then(
-            (html) => parseVideoList(html)
-          )
-        )
-      );
-      const allMetas = results.flat();
-      // Deduplicate by id while preserving order
-      const seen = new Set();
-      const metas = [];
-      for (const meta of allMetas) {
-        if (!seen.has(meta.id)) {
-          seen.add(meta.id);
-          metas.push(meta);
-        }
-      }
-      console.log(
-        `[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`
-      );
+      // Fetch ONE page at a time (viewport scroll). Stremio will call again
+      // with a higher skip when the user scrolls to the bottom.
+      const url = search ? searchUrl(search, page) : catUrl(slug, page);
+      const html = await fetchHtml(url);
+      const metas = await parseVideoList(html);
+      console.log(`[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`);
       return { metas };
     }
   } catch (e) {
