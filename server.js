@@ -122,12 +122,7 @@ app.get("/", (req, res) => {
       </div>
 
       <!-- Features -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16">
-        <div class="card-hover glass p-6 rounded-2xl border border-slate-800/50">
-          <div class="w-10 h-10 bg-red-900/50 rounded-lg flex items-center justify-center text-red-500 mb-4">📂</div>
-          <h3 class="text-lg font-semibold text-white mb-2">Categories</h3>
-          <p class="text-sm text-slate-400">29 auto-fetched categories including Anal, Blowjob, Lesbian, MILF, Teen, and more.</p>
-        </div>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mt-16">
         <div class="card-hover glass p-6 rounded-2xl border border-slate-800/50">
           <div class="w-10 h-10 bg-red-900/50 rounded-lg flex items-center justify-center text-red-500 mb-4">🔍</div>
           <h3 class="text-lg font-semibold text-white mb-2">Search</h3>
