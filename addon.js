@@ -50,11 +50,11 @@ function videoUrl(slug) {
   return `${BASE}/videos/${slug}/`;
 }
 function catUrl(slug, page) {
-  return `${BASE}/categories/${slug}/?page=${page || 1}`;
+  return page > 1 ? `${BASE}/categories/${slug}/${page}/` : `${BASE}/categories/${slug}/`;
 }
 function searchUrl(q, page) {
   const base = `${BASE}/search/${encodeURIComponent(q)}/`;
-  return page > 1 ? base + `?page=${page}` : base;
+  return page > 1 ? `${base}${page}/` : base;
 }
 
 function slugFromHref(href) {
@@ -253,31 +253,47 @@ builder.defineCatalogHandler(async ({ type, id, extra }) => {
   if (type !== "movie") return { metas: [] };
   const search = extra && extra.search ? String(extra.search) : null;
   const skip = extra && extra.skip ? parseInt(extra.skip, 10) : 0;
-  const VIDEOS_PER_PAGE = 32;
+  const PAGE_SIZE = 32;
+  const page = Math.floor(skip / PAGE_SIZE) + 1;
 
   try {
     if (id === "pimpbunny_popular") {
-      // Homepage does not paginate via ?page= (returns same content).
-      // Return a slice starting from the skip offset so Stremio can paginate.
+      // Homepage does not paginate via ?page= (returns same content),
+      // so only serve the first batch; Stremio will stop asking when we return [].
+      if (skip > 0) return { metas: [] };
       const url = search ? searchUrl(search) : BASE + "/";
       const html = await fetchHtml(url);
-      const allMetas = await parseVideoList(html);
-      console.log(`[pimpbunny] catalog ${id} skip=${skip} -> ${allMetas.slice(skip).length} metas`);
-      return { metas: allMetas.slice(skip) };
+      const metas = await parseVideoList(html);
+      console.log(`[pimpbunny] catalog ${id} -> ${metas.length} metas`);
+      return { metas };
     }
 
     const m = id.match(/^pimpbunny_cat_(.+)$/);
     if (m) {
       const slug = m[1];
-      // Determine which pimpbunny page contains the skip offset.
-      const page = Math.floor(skip / VIDEOS_PER_PAGE) + 1;
-      const offsetInPage = skip % VIDEOS_PER_PAGE;
-      const url = search ? searchUrl(search, page) : catUrl(slug, page);
-      const html = await fetchHtml(url);
-      const allMetas = await parseVideoList(html);
-      // Return a slice starting from the offset within this page.
-      const metas = allMetas.slice(offsetInPage);
-      console.log(`[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`);
+      // Fetch multiple pages at once (like MalluFlix) so Stremio always
+      // has enough results and new videos appear on each pagination call.
+      const pages = [page, page + 1, page + 2];
+      const results = await Promise.all(
+        pages.map((p) =>
+          fetchHtml(search ? searchUrl(search, p) : catUrl(slug, p)).then(
+            (html) => parseVideoList(html)
+          )
+        )
+      );
+      const allMetas = results.flat();
+      // Deduplicate by id while preserving order
+      const seen = new Set();
+      const metas = [];
+      for (const meta of allMetas) {
+        if (!seen.has(meta.id)) {
+          seen.add(meta.id);
+          metas.push(meta);
+        }
+      }
+      console.log(
+        `[pimpbunny] catalog ${id} page=${page} skip=${skip} -> ${metas.length} metas`
+      );
       return { metas };
     }
   } catch (e) {
